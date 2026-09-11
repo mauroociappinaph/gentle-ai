@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gentleman-programming/gentle-ai/v2/internal/components/sdd"
@@ -29,6 +30,80 @@ const (
 // maxVisibleItems is the maximum number of items shown in scrollable sub-lists.
 const maxVisibleItems = 10
 const maxVisiblePhaseRows = 16
+
+func displayWidth(value string) int {
+	width := 0
+	for i := 0; i < len(value); {
+		if value[i] == '\x1b' && i+1 < len(value) && value[i+1] == '[' {
+			i += 2
+			for i < len(value) {
+				if value[i] >= 0x40 && value[i] <= 0x7e {
+					i++
+					break
+				}
+				i++
+			}
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(value[i:])
+		width += runeDisplayWidth(r)
+		i += size
+	}
+	return width
+}
+
+func runeDisplayWidth(r rune) int {
+	if r == 0 || unicode.IsControl(r) || r == '\u200c' || r == '\u200d' || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) || unicode.Is(unicode.Mc, r) {
+		return 0
+	}
+	if (r >= 0x2600 && r <= 0x27bf) || (r >= 0x1f300 && r <= 0x1faff) {
+		return 2
+	}
+	if r >= 0x1100 && (r <= 0x115f || r == 0x2329 || r == 0x232a ||
+		(r >= 0x2e80 && r <= 0xa4cf && r != 0x303f) ||
+		(r >= 0xac00 && r <= 0xd7a3) || (r >= 0xf900 && r <= 0xfaff) ||
+		(r >= 0xfe10 && r <= 0xfe19) || (r >= 0xfe30 && r <= 0xfe6f) ||
+		(r >= 0xff00 && r <= 0xff60) || (r >= 0xffe0 && r <= 0xffe6) ||
+		(r >= 0x20000 && r <= 0x3fffd)) {
+		return 2
+	}
+	return 1
+}
+
+func truncatePickerRow(value string, width int) string {
+	if width <= 0 || displayWidth(value) <= width {
+		return value
+	}
+	if width == 1 {
+		return "…"
+	}
+	var b strings.Builder
+	remaining := width - 1
+	for i := 0; i < len(value); {
+		if value[i] == '\x1b' && i+1 < len(value) && value[i+1] == '[' {
+			end := i + 2
+			for end < len(value) && (value[end] < 0x40 || value[end] > 0x7e) {
+				end++
+			}
+			if end < len(value) {
+				end++
+			}
+			b.WriteString(value[i:end])
+			i = end
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(value[i:])
+		charWidth := runeDisplayWidth(r)
+		if charWidth > remaining {
+			break
+		}
+		b.WriteString(value[i : i+size])
+		remaining -= charWidth
+		i += size
+	}
+	b.WriteString("…")
+	return b.String()
+}
 
 // visibleListStart keeps the focused row inside a scrollable list's adaptive viewport.
 func visibleListStart(cursor, scroll, itemCount, capacity int) int {
@@ -830,9 +905,9 @@ func renderEffortSelect(state ModelPickerState) string {
 		focused := i == state.EffortCursor
 
 		if focused {
-			b.WriteString(styles.SelectedStyle.Render(styles.Cursor+opt) + "\n")
+			b.WriteString(styles.SelectedStyle.Render(truncatePickerRow(styles.Cursor+opt, state.Viewport.Width)) + "\n")
 		} else {
-			b.WriteString(styles.UnselectedStyle.Render("  "+opt) + "\n")
+			b.WriteString(styles.UnselectedStyle.Render(truncatePickerRow("  "+opt, state.Viewport.Width)) + "\n")
 		}
 	}
 
@@ -970,9 +1045,9 @@ func renderPhaseList(
 		case identity.Kind == ModelPickerRowKindSeparator:
 			// Separator row — render as a visual divider with subtle indicator when focused.
 			if focused {
-				b.WriteString(styles.SubtextStyle.Render("▸ "+row) + "\n")
+				b.WriteString(styles.SubtextStyle.Render(truncatePickerRow("▸ "+row, state.Viewport.Width)) + "\n")
 			} else {
-				b.WriteString(styles.SubtextStyle.Render("  "+row) + "\n")
+				b.WriteString(styles.SubtextStyle.Render(truncatePickerRow("  "+row, state.Viewport.Width)) + "\n")
 			}
 			continue
 		default:
@@ -986,9 +1061,9 @@ func renderPhaseList(
 		}
 
 		if focused {
-			b.WriteString(styles.SelectedStyle.Render(styles.Cursor+label) + "\n")
+			b.WriteString(styles.SelectedStyle.Render(truncatePickerRow(styles.Cursor+label, state.Viewport.Width)) + "\n")
 		} else {
-			b.WriteString(styles.UnselectedStyle.Render("  "+label) + "\n")
+			b.WriteString(styles.UnselectedStyle.Render(truncatePickerRow("  "+label, state.Viewport.Width)) + "\n")
 		}
 	}
 	if end < len(rows) {
@@ -1030,9 +1105,9 @@ func renderProviderSelect(state ModelPickerState) string {
 		focused := i == state.ProviderCursor
 
 		if focused {
-			b.WriteString(styles.SelectedStyle.Render(styles.Cursor+label) + "\n")
+			b.WriteString(styles.SelectedStyle.Render(truncatePickerRow(styles.Cursor+label, state.Viewport.Width)) + "\n")
 		} else {
-			b.WriteString(styles.UnselectedStyle.Render("  "+label) + "\n")
+			b.WriteString(styles.UnselectedStyle.Render(truncatePickerRow("  "+label, state.Viewport.Width)) + "\n")
 		}
 	}
 
@@ -1093,9 +1168,9 @@ func renderModelSelect(state ModelPickerState) string {
 		focused := i == state.ModelCursor
 
 		if focused {
-			b.WriteString(styles.SelectedStyle.Render(styles.Cursor+label) + "\n")
+			b.WriteString(styles.SelectedStyle.Render(truncatePickerRow(styles.Cursor+label, state.Viewport.Width)) + "\n")
 		} else {
-			b.WriteString(styles.UnselectedStyle.Render("  "+label) + "\n")
+			b.WriteString(styles.UnselectedStyle.Render(truncatePickerRow("  "+label, state.Viewport.Width)) + "\n")
 		}
 	}
 

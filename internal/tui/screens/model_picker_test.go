@@ -34,6 +34,66 @@ func TestModelPickerViewport_AdaptiveAndLegacyCapacities(t *testing.T) {
 	}
 }
 
+func TestModelPickerRows_TruncateToViewportWidth(t *testing.T) {
+	const width = 32
+	long := "very-long-provider-model-and-effort-label"
+
+	if got := truncatePickerRow("▸ "+long, width); displayWidth(got) > width || !strings.HasSuffix(got, "…") {
+		t.Fatalf("truncated row = %q, width = %d; want ellipsized row within %d columns", got, displayWidth(got), width)
+	}
+
+	t.Run("emoji", func(t *testing.T) {
+		longEmojiRow := "▸ " + strings.Repeat("😀", width)
+		want := "▸ " + strings.Repeat("😀", 14) + "…"
+		if got := truncatePickerRow(longEmojiRow, width); got != want {
+			t.Fatalf("truncated emoji row = %q, want %q", got, want)
+		}
+	})
+
+	providerState := ModelPickerState{
+		Mode: ModeProviderSelect, Viewport: ModelPickerViewport{Width: width}, AvailableIDs: []string{"provider"},
+		Providers: map[string]opencode.Provider{"provider": {Name: long}}, SDDModels: map[string][]opencode.Model{"provider": {{}}},
+	}
+	modelState := ModelPickerState{
+		Mode: ModeModelSelect, Viewport: ModelPickerViewport{Width: width}, SelectedProvider: "provider",
+		SDDModels: map[string][]opencode.Model{"provider": {{ID: "model", Name: long}}},
+	}
+	effortState := ModelPickerState{Mode: ModeEffortSelect, Viewport: ModelPickerViewport{Width: width}, SelectedModelEffortLevels: []string{long}}
+	phaseState := ModelPickerState{
+		Viewport: ModelPickerViewport{Width: width}, AvailableIDs: []string{"provider"}, CustomAgents: []string{long},
+		Providers: map[string]opencode.Provider{"provider": {Name: long, Models: map[string]opencode.Model{"model": {Name: long}}}},
+	}
+	customRow := len(ModelPickerRowsForState(phaseState)) - 1
+	assignments := map[string]model.ModelAssignment{long: {ProviderID: "provider", ModelID: "model", Effort: long}}
+
+	for name, rendered := range map[string]string{
+		"provider": renderProviderSelect(providerState),
+		"model":    renderModelSelect(modelState),
+		"effort":   renderEffortSelect(effortState),
+		"phase":    RenderModelPicker(assignments, phaseState, customRow),
+	} {
+		for _, line := range strings.Split(rendered, "\n") {
+			if strings.Contains(line, "▸") && displayWidth(line) > width {
+				t.Fatalf("%s row width = %d, want <= %d: %q", name, displayWidth(line), width, line)
+			}
+		}
+	}
+}
+
+func TestRuneDisplayWidth_ZeroWidthMarksAndJoiners(t *testing.T) {
+	for _, r := range []rune{
+		'\u0301', // Mn: combining acute accent
+		'\u20DD', // Me: combining enclosing circle
+		'\u093E', // Mc: Devanagari vowel sign AA
+		'\u200C', // zero-width non-joiner
+		'\u200D', // zero-width joiner
+	} {
+		if got := runeDisplayWidth(r); got != 0 {
+			t.Errorf("runeDisplayWidth(%U) = %d, want 0", r, got)
+		}
+	}
+}
+
 func TestModelPickerViewport_RenderersKeepFocusedRowVisibleAfterResize(t *testing.T) {
 	viewport := ModelPickerViewport{Width: 80, Height: 12}
 
